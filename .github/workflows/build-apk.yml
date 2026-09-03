@@ -1,0 +1,147 @@
+name: Build Noor APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # 1 — تحميل الريبو
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2 — Node 22
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 3 — البحث عن أحدث ZIP وفكّه تلقائيًا
+      - name: Find and Extract ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "🔎 Searching for ZIP file..."
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" \
+            -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ No ZIP file found."
+            exit 1
+          fi
+
+          echo "📦 Using ZIP:"
+          echo "$ZIP_FILE"
+
+          rm -rf extracted
+          mkdir -p extracted
+
+          unzip -q "$ZIP_FILE" -d extracted
+
+          echo "🔎 Searching for index.html..."
+
+          INDEX_FILE=$(find extracted -type f -iname "index.html" | head -n 1)
+
+          if [ -z "$INDEX_FILE" ]; then
+            echo "❌ index.html was not found inside the ZIP."
+            exit 1
+          fi
+
+          WEB_DIR=$(dirname "$INDEX_FILE")
+
+          echo "🌐 Web project:"
+          echo "$WEB_DIR"
+
+          rm -rf web
+          mkdir -p web
+
+          cp -R "$WEB_DIR"/. web/
+
+          echo "✅ ZIP extracted successfully."
+
+      # 4 — تجهيز package.json إذا المشروع لا يحتوي عليه
+      - name: Prepare Node Project
+        working-directory: web
+        shell: bash
+        run: |
+          if [ ! -f package.json ]; then
+            echo "Creating package.json..."
+
+            cat > package.json <<'EOF'
+          {
+            "name": "noor-islamic-app",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/core": "^8.0.0",
+              "@capacitor/android": "^8.0.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^8.0.0"
+            }
+          }
+          EOF
+          fi
+
+      # 5 — إعداد Capacitor
+      - name: Prepare Capacitor
+        working-directory: web
+        shell: bash
+        run: |
+          if [ ! -f capacitor.config.js ]; then
+
+            cat > capacitor.config.js <<'EOF'
+          const config = {
+            appId: "com.ahmedbadr.noor",
+            appName: "نُور",
+            webDir: ".",
+            bundledWebRuntime: false
+          };
+
+          module.exports = config;
+          EOF
+
+          fi
+
+      # 6 — تثبيت الحزم
+      - name: Install Dependencies
+        working-directory: web
+        run: npm install
+
+      # 7 — إضافة Android
+      - name: Add Android
+        working-directory: web
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      # 8 — مزامنة المشروع
+      - name: Sync Android
+        working-directory: web
+        run: npx cap sync android
+
+      # 9 — بناء APK
+      - name: Build APK
+        working-directory: web/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      # 10 — رفع APK
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Noor-APK
+          path: web/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
