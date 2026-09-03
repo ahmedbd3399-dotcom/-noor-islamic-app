@@ -2,6 +2,7 @@ name: Build Noor APK
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - main
@@ -10,75 +11,97 @@ permissions:
   contents: read
 
 jobs:
-  build-apk:
+  check:
     runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check_zip.outputs.should_build }}
 
     steps:
-
-      # 1 — تحميل الريبو
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      # 2 — Node 22
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
+          fetch-depth: 2
 
-      # 3 — البحث عن أحدث ZIP وفكّه تلقائيًا
-      - name: Find and Extract ZIP
+      - name: Check ZIP
+        id: check_zip
         shell: bash
         run: |
           set -e
 
-          echo "🔎 Searching for ZIP file..."
+          ZIP_COUNT=$(find . -maxdepth 2 -type f -iname "*.zip" | wc -l)
+
+          if [ "$ZIP_COUNT" -eq 0 ]; then
+            echo "No ZIP exists. Skipping build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ZIP found."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-apk:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Project
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Find Latest ZIP
+        shell: bash
+        run: |
+          set -e
 
           ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" \
             -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "❌ No ZIP file found."
+            echo "ERROR: No ZIP found."
             exit 1
           fi
 
-          echo "📦 Using ZIP:"
+          echo "Using:"
           echo "$ZIP_FILE"
 
-          rm -rf extracted
-          mkdir -p extracted
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      - name: Extract ZIP
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf extracted web
+          mkdir -p extracted web
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "🔎 Searching for index.html..."
+          INDEX=$(find extracted -type f -iname "index.html" | head -n 1)
 
-          INDEX_FILE=$(find extracted -type f -iname "index.html" | head -n 1)
-
-          if [ -z "$INDEX_FILE" ]; then
-            echo "❌ index.html was not found inside the ZIP."
+          if [ -z "$INDEX" ]; then
+            echo "ERROR: index.html not found inside ZIP."
             exit 1
           fi
 
-          WEB_DIR=$(dirname "$INDEX_FILE")
+          WEB_DIR=$(dirname "$INDEX")
 
-          echo "🌐 Web project:"
+          echo "Web directory:"
           echo "$WEB_DIR"
-
-          rm -rf web
-          mkdir -p web
 
           cp -R "$WEB_DIR"/. web/
 
-          echo "✅ ZIP extracted successfully."
-
-      # 4 — تجهيز package.json إذا المشروع لا يحتوي عليه
-      - name: Prepare Node Project
+      - name: Prepare Capacitor
         working-directory: web
         shell: bash
         run: |
-          if [ ! -f package.json ]; then
-            echo "Creating package.json..."
 
-            cat > package.json <<'EOF'
+          cat > package.json <<'EOF'
           {
             "name": "noor-islamic-app",
             "version": "1.0.0",
@@ -92,52 +115,33 @@ jobs:
             }
           }
           EOF
-          fi
 
-      # 5 — إعداد Capacitor
-      - name: Prepare Capacitor
-        working-directory: web
-        shell: bash
-        run: |
-          if [ ! -f capacitor.config.js ]; then
-
-            cat > capacitor.config.js <<'EOF'
+          cat > capacitor.config.js <<'EOF'
           const config = {
             appId: "com.ahmedbadr.noor",
             appName: "نُور",
-            webDir: ".",
-            bundledWebRuntime: false
+            webDir: "."
           };
 
           module.exports = config;
           EOF
 
-          fi
-
-      # 6 — تثبيت الحزم
       - name: Install Dependencies
         working-directory: web
         run: npm install
 
-      # 7 — إضافة Android
       - name: Add Android
         working-directory: web
-        run: |
-          if [ ! -d android ]; then
-            npx cap add android
-          fi
+        run: npx cap add android
 
-      # 8 — مزامنة المشروع
       - name: Sync Android
         working-directory: web
         run: npx cap sync android
 
-      # 9 — بناء APK
       - name: Build APK
         working-directory: web/android
         run: ./gradlew assembleDebug --no-daemon
 
-      # 10 — رفع APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
