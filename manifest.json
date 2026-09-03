@@ -1,0 +1,4 @@
+{
+  "name":"نُور — تطبيق إسلامي شامل","short_name":"نُور","start_url":".","display":"standalone","background_color":"#f4f7f5","theme_color":"#0d6b52","lang":"ar","dir":"rtl",
+  "icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
