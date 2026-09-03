@@ -13,40 +13,38 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+
     outputs:
       should_build: ${{ steps.check_zip.outputs.should_build }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: Check ZIP
         id: check_zip
         shell: bash
         run: |
-          set -e
-
           ZIP_COUNT=$(find . -maxdepth 2 -type f -iname "*.zip" | wc -l)
 
-          if [ "$ZIP_COUNT" -eq 0 ]; then
-            echo "No ZIP exists. Skipping build."
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ZIP found."
+          if [ "$ZIP_COUNT" -gt 0 ]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "ZIP found."
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "No ZIP found. Build skipped."
           fi
 
   build-apk:
     needs: check
+
     if: needs.check.outputs.should_build == 'true'
 
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Checkout Project
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js 22
@@ -60,47 +58,56 @@ jobs:
           set -e
 
           ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" \
-            -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)
+            -printf '%T@ %p\n' |
+            sort -nr |
+            head -n 1 |
+            cut -d' ' -f2-)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP found."
+            echo "ERROR: ZIP file not found."
             exit 1
           fi
 
-          echo "Using:"
-          echo "$ZIP_FILE"
-
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+          echo "Using ZIP:"
+          echo "$ZIP_FILE"
 
       - name: Extract ZIP
         shell: bash
         run: |
           set -e
 
-          rm -rf extracted web
-          mkdir -p extracted web
+          rm -rf extracted
+          rm -rf web
+
+          mkdir -p extracted
+          mkdir -p web/www
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          INDEX=$(find extracted -type f -iname "index.html" | head -n 1)
+          echo "Searching for index.html..."
 
-          if [ -z "$INDEX" ]; then
-            echo "ERROR: index.html not found inside ZIP."
+          INDEX_FILE=$(find extracted -type f -iname "index.html" | head -n 1)
+
+          if [ -z "$INDEX_FILE" ]; then
+            echo "ERROR: index.html was not found inside ZIP."
             exit 1
           fi
 
-          WEB_DIR=$(dirname "$INDEX")
+          SOURCE_DIR=$(dirname "$INDEX_FILE")
 
-          echo "Web directory:"
-          echo "$WEB_DIR"
+          echo "Website directory:"
+          echo "$SOURCE_DIR"
 
-          cp -R "$WEB_DIR"/. web/
+          cp -R "$SOURCE_DIR"/. web/www/
 
-      - name: Prepare Capacitor
+          echo "Website copied to web/www"
+
+      - name: Create package.json
         working-directory: web
         shell: bash
         run: |
-
           cat > package.json <<'EOF'
           {
             "name": "noor-islamic-app",
@@ -116,17 +123,21 @@ jobs:
           }
           EOF
 
+      - name: Create Capacitor configuration
+        working-directory: web
+        shell: bash
+        run: |
           cat > capacitor.config.js <<'EOF'
           const config = {
             appId: "com.ahmedbadr.noor",
             appName: "نُور",
-            webDir: "."
+            webDir: "www"
           };
 
           module.exports = config;
           EOF
 
-      - name: Install Dependencies
+      - name: Install Capacitor
         working-directory: web
         run: npm install
 
@@ -138,14 +149,14 @@ jobs:
         working-directory: web
         run: npx cap sync android
 
-      - name: Build APK
+      - name: Build Debug APK
         working-directory: web/android
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Noor-APK
+          name: Noor-Islamic-App-APK
           path: web/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
