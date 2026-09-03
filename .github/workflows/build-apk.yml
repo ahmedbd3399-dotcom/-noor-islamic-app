@@ -1,4 +1,4 @@
-name: Build Noor APK
+name: Build APK
 
 on:
   workflow_dispatch:
@@ -14,32 +14,78 @@ jobs:
       - name: تحميل المشروع
         uses: actions/checkout@v4
 
-      - name: تجهيز Node.js
+      - name: تجهيز Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
 
-      - name: فك ملف التطبيق
+      - name: البحث عن ملف ZIP وفك الضغط
+        shell: bash
         run: |
-          mkdir web
-          unzip -q Noor_Islamic_App_FINAL.zip -d web
+          set -e
 
-      - name: تثبيت Capacitor
-        working-directory: web
-        run: npm install
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
 
-      - name: إعداد Capacitor
-        working-directory: web
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ لم يتم العثور على ملف ZIP"
+            exit 1
+          fi
+
+          echo "📦 ZIP: $ZIP_FILE"
+
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+          INDEX=$(find extracted -type f -iname "index.html" | head -n 1)
+
+          if [ -z "$INDEX" ]; then
+            echo "❌ لم يتم العثور على index.html داخل ZIP"
+            exit 1
+          fi
+
+          WEB_SOURCE=$(dirname "$INDEX")
+
+          echo "WEB_SOURCE=$WEB_SOURCE" >> "$GITHUB_ENV"
+
+          echo "✅ ملفات التطبيق موجودة في:"
+          echo "$WEB_SOURCE"
+
+      - name: إنشاء مشروع Capacitor
         run: |
+          mkdir -p web
+          cp -R "$WEB_SOURCE"/. web/
+
+          cd web
+
+          cat > package.json <<'EOF'
+          {
+            "name": "noor-app",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/core": "latest",
+              "@capacitor/android": "latest"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "latest"
+            }
+          }
+          EOF
+
           cat > capacitor.config.js <<'EOF'
           const config = {
             appId: "com.ahmedbadr.noor",
             appName: "نُور",
-            webDir: ".",
-            bundledWebRuntime: false
+            webDir: "."
           };
+
           module.exports = config;
           EOF
+
+      - name: تثبيت Capacitor
+        working-directory: web
+        run: npm install
 
       - name: إضافة Android
         working-directory: web
@@ -56,5 +102,5 @@ jobs:
       - name: رفع APK
         uses: actions/upload-artifact@v4
         with:
-          name: Noor-APK-v1.0.0
+          name: APK
           path: web/android/app/build/outputs/apk/debug/app-debug.apk
