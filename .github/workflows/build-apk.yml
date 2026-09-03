@@ -1,0 +1,60 @@
+name: Build Noor APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: تحميل المشروع
+        uses: actions/checkout@v4
+
+      - name: تجهيز Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: فك ملف التطبيق
+        run: |
+          mkdir web
+          unzip -q Noor_Islamic_App_FINAL.zip -d web
+
+      - name: تثبيت Capacitor
+        working-directory: web
+        run: npm install
+
+      - name: إعداد Capacitor
+        working-directory: web
+        run: |
+          cat > capacitor.config.js <<'EOF'
+          const config = {
+            appId: "com.ahmedbadr.noor",
+            appName: "نُور",
+            webDir: ".",
+            bundledWebRuntime: false
+          };
+          module.exports = config;
+          EOF
+
+      - name: إضافة Android
+        working-directory: web
+        run: npx cap add android
+
+      - name: مزامنة التطبيق
+        working-directory: web
+        run: npx cap sync android
+
+      - name: بناء APK
+        working-directory: web/android
+        run: ./gradlew assembleDebug
+
+      - name: رفع APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Noor-APK-v1.0.0
+          path: web/android/app/build/outputs/apk/debug/app-debug.apk
