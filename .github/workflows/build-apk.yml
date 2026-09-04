@@ -76,6 +76,12 @@ jobs:
           echo "Website directory: $SOURCE_DIR"
 
           cp -R "$SOURCE_DIR"/. web/www/
+          rm -rf web/www/.github web/www/native-android
+
+          if [ ! -d extracted/native-android ]; then
+            echo "ERROR: native-android folder missing from ZIP."
+            exit 1
+          fi
 
       - name: Create package.json
         working-directory: web
@@ -115,6 +121,45 @@ jobs:
       - name: Add Android
         working-directory: web
         run: npx cap add android
+
+      - name: Install Noor Native Adhan
+        working-directory: web
+        shell: bash
+        run: |
+          mkdir -p android/app/src/main/java/com/ahmedbadr/noor
+          cp ../extracted/native-android/*.java android/app/src/main/java/com/ahmedbadr/noor/
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          perms='''\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />\n'''
+          if 'SCHEDULE_EXACT_ALARM' not in s: s=s.replace('<application', perms+'    <application',1)
+          if 'ACCESS_FINE_LOCATION' not in s:
+              s=s.replace('<application', '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n<application', 1)
+          services='''\n        <receiver android:name=".AdhanReceiver" android:exported="false" />\n        <receiver android:name=".BootReceiver" android:enabled="true" android:exported="false">\n            <intent-filter>\n                <action android:name="android.intent.action.BOOT_COMPLETED" />\n                <action android:name="android.intent.action.TIME_SET" />\n                <action android:name="android.intent.action.TIMEZONE_CHANGED" />\n            </intent-filter>\n        </receiver>\n        <service android:name=".AdhanService" android:exported="false" android:foregroundServiceType="mediaPlayback" />\n'''
+          if '.AdhanService' not in s: s=s.replace('</application>', services+'    </application>')
+          icon_src=Path('../extracted/native-android/noor_icon.png')
+          if icon_src.exists():
+              import shutil
+              res=Path('android/app/src/main/res/drawable')
+              res.mkdir(parents=True,exist_ok=True)
+              shutil.copy2(icon_src,res/'noor_icon.png')
+              s=s.replace('android:icon="@mipmap/ic_launcher"','android:icon="@drawable/noor_icon"')
+              s=s.replace('android:roundIcon="@mipmap/ic_launcher_round"','android:roundIcon="@drawable/noor_icon"')
+          p.write_text(s)
+          PY
+
+      - name: Verify Manifest Permissions
+        working-directory: web
+        shell: bash
+        run: |
+          echo "== Permissions declared in final AndroidManifest.xml =="
+          grep -o '<uses-permission[^/]*/>' android/app/src/main/AndroidManifest.xml || echo "NO PERMISSIONS FOUND - THIS IS A BUG"
+          echo "== Receivers / Services declared =="
+          grep -o '<receiver[^>]*>' android/app/src/main/AndroidManifest.xml || true
+          grep -o '<service[^>]*>' android/app/src/main/AndroidManifest.xml || true
+          echo "== Confirming MainActivity.java has AndroidNoor bridge =="
+          grep -c "AndroidNoor" android/app/src/main/java/com/ahmedbadr/noor/MainActivity.java || echo "MISSING - THIS IS A BUG"
 
       - name: Sync Android
         working-directory: web
